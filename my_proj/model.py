@@ -5,6 +5,7 @@ class User(db.Model):
     __tablename__ = "user"
     id = db.Column(db.Integer(), primary_key=True)
     username = db.Column(db.String(length=35), nullable=False, unique=False)
+    password = db.Column(db.String(length=255), nullable=False)
     records = db.relationship("Record", back_populates="user", lazy="dynamic")
     currency_id_df = db.Column(db.Integer, db.ForeignKey("currency.id"))
     currency_df = db.relationship("Currency", foreign_keys=[currency_id_df])

@@ -2,8 +2,10 @@
 from marshmallow import Schema, fields, validate, ValidationError
 
 class userSc(Schema):
+    id = fields.Int()
     username = fields.String(required=True)
     currency_id_df = fields.Int(required=False)
+    password = fields.String(required=True)
 class categorySc(Schema):
     name = fields.String(required=True)
 

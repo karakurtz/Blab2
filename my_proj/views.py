@@ -6,12 +6,45 @@ from my_proj.model import User, Category, Record, Currency
 import uuid
 from marshmallow.exceptions import ValidationError
 from sqlalchemy.exc import IntegrityError
+from flask_jwt_extended import JWTManager, jwt_required, create_access_token, verify_jwt_in_request, get_jwt_identity
+from passlib.hash import pbkdf2_sha256
 
 
+jwt = JWTManager(app)
 
 with app.app_context():
     db.create_all()
     db.session.commit()
+
+
+@jwt.expired_token_loader
+def expired_token_callback(jwt_header, jwt_payload):
+   return (
+       jsonify({"message": "The token has expired.", "error": "token_expired"}),
+       401,
+   )
+
+@jwt.invalid_token_loader
+def invalid_token_callback(error):
+   return (
+       jsonify(
+           {"message": "Signature verification failed.", "error": "invalid_token"}
+       ),
+       401,
+   )
+
+@jwt.unauthorized_loader
+def missing_token_callback(error):
+   return (
+       jsonify(
+           {
+               "description": "Request does not contain an access token.",
+               "error": "authorization_required",
+           }
+       ),
+       401,
+   )
+
 
 
 
@@ -31,6 +64,13 @@ def healthcheck():
 @app.route('/user/<int:USER_ID>', methods=['GET', 'DELETE'])
 def user_manager(USER_ID):
     with app.app_context():
+        jwt_claims = verify_jwt_in_request()
+        current_user_id = get_jwt_identity()
+        if jwt_claims is None:
+            return jsonify({'error': 'invalid token'}), 400
+        if current_user_id != USER_ID:
+            return jsonify({'error': 'invalid permmision'}), 403
+
         user_data_qu = User.query.get(USER_ID)
 
         if not user_data_qu:
@@ -51,6 +91,7 @@ def user_manager(USER_ID):
 
 
 @app.route('/users', methods=['GET'])
+@jwt_required()
 def users_getter():
     with app.app_context():
         response = [
@@ -60,8 +101,8 @@ def users_getter():
         ]
         return jsonify(response)
 
-@app.route('/user', methods=['POST'])
-def user_creator():
+@app.route('/user/reg', methods=['POST'])
+def create_user():
     user_data_req = request.get_json()
 
     userSchema = userSc()
@@ -83,7 +124,8 @@ def user_creator():
 
     post_user = User(
         username=user_data_example["username"],
-        currency_id_df=currency_df.id
+        currency_id_df=currency_df.id,
+        password=pbkdf2_sha256.hash(user_data_example["password"])
     )
     with app.app_context():
         db.session.add(post_user)
@@ -97,6 +139,30 @@ def user_creator():
 
         return jsonify(response), 200
 
+@app.route('/user/login', methods=['POST'])
+def login_user():
+    user_data_req = request.get_json()
+    user_schema_example = userSc()
+    try:
+        post_user = user_schema_example.load(user_data_req)
+    except ValidationError as err:
+        return jsonify({'error': err.messages}), 400
+    username = post_user["username"]
+    provided_user_id = post_user["id"]
+
+    with app.app_context():
+        user_read = User.query.filter_by(username=username).first()
+        if user_read:
+            if provided_user_id is not None and provided_user_id == user_read.id:
+                if pbkdf2_sha256.verify(post_user["password"], user_read.password):
+                    access_token = create_access_token(identity=user_read.id)
+                    return jsonify({"message": "success login", "token": access_token, "user_id": user_read.id}), 200
+                else:
+                    return jsonify({"message": "wrong password"}), 401
+            else:
+                return jsonify({"message": "wrong user id"}), 401
+        else:
+            return jsonify({"message": "user does not exist"}), 404
 
 
 @app.route('/category', methods=['POST', 'GET'])
@@ -133,6 +199,7 @@ def category_manager():
 
 
 @app.route('/category/<int:CATEGORY_ID>', methods=['DELETE'])
+@jwt_required()
 def category_deleter(CATEGORY_ID):
     with app.app_context():
         category_data_req = Category.query.get(CATEGORY_ID)
@@ -149,6 +216,7 @@ def category_deleter(CATEGORY_ID):
 
 
 @app.route('/records', methods=['GET'])
+@jwt_required()
 def records_getter():
     with app.app_context():
         response = [
@@ -165,6 +233,7 @@ def records_getter():
 
 
 @app.route('/record', methods=['GET', 'POST'])
+@jwt_required()
 def record_manager():
     if request.method == 'GET':
         user_id_req = request.args.get('user_id')
@@ -225,6 +294,7 @@ def record_manager():
             return jsonify(response), 200
 
 @app.route('/record/<int:RECORD_ID>', methods=['GET', 'DELETE'])
+@jwt_required()
 def record_manager2(RECORD_ID):
     with app.app_context():
         record_data_req = Record.query.get(RECORD_ID)
@@ -249,6 +319,7 @@ def record_manager2(RECORD_ID):
             return jsonify({'message': f'record with id - {RECORD_ID} was deleted'}), 200
 
 @app.route('/currency', methods=['POST', 'GET'])
+@jwt_required()
 def currency_manager():
     if request.method == 'GET':
         with app.app_context():
@@ -281,6 +352,7 @@ def currency_manager():
             return jsonify(response), 200
 
 @app.route('/currency/<int:CURRENCY_ID>', methods=['DELETE'])
+@jwt_required()
 def currency_deleter(CURRENCY_ID):
     with app.app_context():
         currency_data_req = Currency.query.filter_by(id=CURRENCY_ID).first()
